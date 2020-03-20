@@ -601,6 +601,47 @@ public class TimeBasedPartitionerTest extends StorageSinkTestBase {
   }
 
   @Test
+  public void testRecordTimeExtractorVariables() throws Exception {
+    TimeBasedPartitioner<String> partitioner = configurePartitioner(
+            new TimeBasedPartitioner<>(), null, null);
+
+    assertThat(partitioner.getTimestampExtractor(),
+            instanceOf(TimeBasedPartitioner.RecordTimestampExtractor.class));
+
+    long timestamp = new DateTime(2015, 4, 2, 1, 5,
+            6, 7, DateTimeZone.forID(TIME_ZONE)).getMillis();
+    SinkRecord sinkRecord = createSinkRecord(timestamp);
+
+    String encodedPartition = partitioner.encodePartition(sinkRecord);
+    validateEncodedPartition(encodedPartition);
+
+    Map<String, String> substitutionVariables = new HashMap<>();
+    encodedPartition = partitioner.encodePartition(sinkRecord, 123L, substitutionVariables);
+    validateEncodedPartition(encodedPartition);
+
+    Map<String, Object> m = new HashMap<>();
+    String expectedEncodedPartition = "year=2015/month=4/day=2/hour=1";
+    m.put("partitioner.encodedPartition", expectedEncodedPartition);
+    m.put("partitioner.partitionedPath", TOPIC + StorageCommonConfig.DIRECTORY_DELIM_DEFAULT + expectedEncodedPartition);
+    m.put("partitioner.nowMillis", "123");
+    m.put("FILEOPEN_MILLIS", "123");
+    m.put("YYYY", "2015");
+    m.put("MM", "04");
+    m.put("DD", "02");
+    m.put("hh", "01");
+    m.put("mm", "00");
+    m.put("ss", "00");
+    m.put("DATE", "20150402");
+    m.put("TIME", "010000");
+    m.put("DATETIME", "20150402-010000");
+    m.put("CURRENT_DATETIME", "20150402-010000");
+    m.put("FILEROLL_DATETIME", "20150402-010000");
+    m.put("MONTH", "Apr");
+    m.put("YY", "15");
+    assertThat(substitutionVariables, is(m));
+  }
+
+  @Test
   public void testWallclockTimeExtractor() {
     long now = 15778800000L;
     TimeBasedPartitioner<String> partitioner = configurePartitioner(

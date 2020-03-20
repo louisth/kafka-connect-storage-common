@@ -15,6 +15,7 @@
 
 package io.confluent.connect.storage.partitioner;
 
+import com.google.common.base.Function;
 import io.confluent.connect.storage.util.DataUtils;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.utils.Time;
@@ -36,6 +37,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.HashMap;
 
 import io.confluent.connect.storage.common.SchemaGenerator;
 import io.confluent.connect.storage.common.StorageCommonConfig;
@@ -53,6 +55,8 @@ public class TimeBasedPartitioner<T> extends DefaultPartitioner<T> {
   private String pathFormat;
   private DateTimeFormatter formatter;
   protected TimestampExtractor timestampExtractor;
+
+  private final Map<String, DateTimeFormatter> variableFormatters = new HashMap<>();
 
   protected void init(
       long partitionDurationMs,
@@ -78,6 +82,22 @@ public class TimeBasedPartitioner<T> extends DefaultPartitioner<T> {
       ce.initCause(e);
       throw ce;
     }
+
+    Function<String, DateTimeFormatter> makeFormatter
+            = pattern -> DateTimeFormat.forPattern(pattern).withZone(timeZone).withLocale(locale);
+    variableFormatters.put("YYYY", makeFormatter.apply("yyyy"));
+    variableFormatters.put("MM", makeFormatter.apply("MM"));
+    variableFormatters.put("DD", makeFormatter.apply("dd"));
+    variableFormatters.put("hh", makeFormatter.apply("HH"));
+    variableFormatters.put("mm", makeFormatter.apply("mm"));
+    variableFormatters.put("ss", makeFormatter.apply("ss"));
+    variableFormatters.put("DATE", makeFormatter.apply("yyyyMMdd"));
+    variableFormatters.put("TIME", makeFormatter.apply("HHmmss"));
+    variableFormatters.put("DATETIME", makeFormatter.apply("yyyyMMdd-HHmmss"));
+    variableFormatters.put("CURRENT_DATETIME", makeFormatter.apply("yyyyMMdd-HHmmss"));
+    variableFormatters.put("FILEROLL_DATETIME", makeFormatter.apply("yyyyMMdd-HHmmss"));
+    variableFormatters.put("MONTH", makeFormatter.apply("MMM"));
+    variableFormatters.put("YY", makeFormatter.apply("yy"));
   }
 
   private static DateTimeFormatter getDateTimeFormatter(String str, DateTimeZone timeZone) {
@@ -152,6 +172,33 @@ public class TimeBasedPartitioner<T> extends DefaultPartitioner<T> {
   }
 
   @Override
+  public String encodePartition(SinkRecord sinkRecord, long nowInMillis,
+                                Map<String, String> substitutionVariables) {
+    Long timestamp = timestampExtractor.extract(sinkRecord, nowInMillis);
+    DateTime bucket = getBucket(sinkRecord, timestamp);
+    String encodedPartition = bucket.toString(formatter);
+
+    // update the variables if the partition changed
+    if (!encodedPartition.equals(substitutionVariables.get("partitioner.encodedPartition"))) {
+      // set paths
+      substitutionVariables.put("partitioner.encodedPartition", encodedPartition);
+      substitutionVariables.put("partitioner.partitionedPath",
+              generatePartitionedPath(sinkRecord.topic(), encodedPartition));
+
+      // set millis
+      String nowInMillisStr = String.valueOf(nowInMillis);
+      substitutionVariables.put("partitioner.nowMillis", nowInMillisStr);
+      substitutionVariables.put("FILEOPEN_MILLIS", nowInMillisStr);
+
+      // set date variables
+      for (Map.Entry<String, DateTimeFormatter> entry : variableFormatters.entrySet()) {
+        substitutionVariables.put(entry.getKey(), bucket.toString(entry.getValue()));
+      }
+    }
+    return encodedPartition;
+  }
+
+  @Override
   public String encodePartition(SinkRecord sinkRecord, long nowInMillis) {
     Long timestamp = timestampExtractor.extract(sinkRecord, nowInMillis);
     return encodedPartitionForTimestamp(sinkRecord, timestamp);
@@ -164,6 +211,10 @@ public class TimeBasedPartitioner<T> extends DefaultPartitioner<T> {
   }
 
   private String encodedPartitionForTimestamp(SinkRecord sinkRecord, Long timestamp) {
+    return getBucket(sinkRecord, timestamp).toString(formatter);
+  }
+
+  private DateTime getBucket(SinkRecord sinkRecord, Long timestamp) {
     if (timestamp == null) {
       String msg = "Unable to determine timestamp using timestamp.extractor "
           + timestampExtractor.getClass().getName()
@@ -172,10 +223,9 @@ public class TimeBasedPartitioner<T> extends DefaultPartitioner<T> {
       log.error(msg);
       throw new ConnectException(msg);
     }
-    DateTime bucket = new DateTime(
+    return new DateTime(
         getPartition(partitionDurationMs, timestamp, formatter.getZone())
     );
-    return bucket.toString(formatter);
   }
 
   @Override

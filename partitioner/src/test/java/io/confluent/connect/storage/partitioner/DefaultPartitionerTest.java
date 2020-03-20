@@ -49,4 +49,31 @@ public class DefaultPartitionerTest extends StorageSinkTestBase {
     assertThat(encodedPartition, is(generateEncodedPartitionFromMap(m)));
   }
 
+  @Test
+  public void testDefaultPartitionerVariables() {
+    Map<String, Object> config = new HashMap<>();
+    config.put(StorageCommonConfig.DIRECTORY_DELIM_CONFIG, StorageCommonConfig.DIRECTORY_DELIM_DEFAULT);
+
+    DefaultPartitioner<String> partitioner = new DefaultPartitioner<>();
+    partitioner.configure(config);
+
+    String timeZoneString = (String) config.get(PartitionerConfig.TIMEZONE_CONFIG);
+    long timestamp = new DateTime(2014, 2, 1, 3, 0, 0, 0, DateTimeZone.forID(timeZoneString)).getMillis();
+    SinkRecord sinkRecord = createSinkRecord(timestamp);
+    long nowInMillis = 10001;
+
+    Map<String, String> substitutionVariables = new HashMap<>();
+    String encodedPartition = partitioner.encodePartition(sinkRecord, nowInMillis, substitutionVariables);
+
+    Map<String, Object> m = new LinkedHashMap<>();
+    m.put("partition", PARTITION);
+    assertThat(encodedPartition, is(generateEncodedPartitionFromMap(m)));
+
+    m.clear();
+    m.put("partitioner.encodedPartition", "partition=" + PARTITION);
+    m.put("partitioner.partitionedPath", TOPIC + StorageCommonConfig.DIRECTORY_DELIM_DEFAULT + "partition=" + PARTITION);
+    m.put("partitioner.nowMillis", "10001");
+    assertThat(substitutionVariables, is(m));
+  }
+
 }

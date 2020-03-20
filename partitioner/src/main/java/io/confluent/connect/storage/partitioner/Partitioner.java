@@ -49,6 +49,24 @@ public interface Partitioner<T> {
     return encodePartition(sinkRecord);
   }
 
+  default String encodePartition(SinkRecord sinkRecord, long nowInMillis,
+                                 Map<String, String> substitutionVariables) {
+    String encodedPartition = encodePartition(sinkRecord, nowInMillis);
+
+    // update the variables if the partition changed
+    if (!encodedPartition.equals(substitutionVariables.get("partitioner.encodedPartition"))) {
+      // set paths
+      substitutionVariables.put("partitioner.encodedPartition", encodedPartition);
+      substitutionVariables.put("partitioner.partitionedPath",
+              generatePartitionedPath(sinkRecord.topic(), encodedPartition));
+
+      // set millis
+      substitutionVariables.put("partitioner.nowMillis", String.valueOf(nowInMillis));
+    }
+
+    return encodedPartition;
+  }
+
   String generatePartitionedPath(String topic, String encodedPartition);
 
   List<T> partitionFields();
